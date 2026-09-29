@@ -1,0 +1,86 @@
+# SIGMA SNAP — Render blueprint (API + Redis; Postgres lives on Supabase)
+#
+# Usage:
+#   1. Create the Supabase project first (see docs/supabase-setup.md) and copy
+#      the pooled (6543) and direct (5432) connection strings.
+#   2. Push this repo to GitHub, then in Render: New → Blueprint → select repo.
+#   3. When prompted, paste DATABASE_URL (pooled) and DIRECT_URL (direct).
+#      JWT secrets are generated automatically. Set WEB_URL to your Vercel URL.
+#
+# NOTE: Render's free web-service tier sleeps when idle and cold-starts on the
+# next request — that breaks "always-on" realtime. For truly always-on
+# WebSockets use a paid instance (Starter+) or the Fly.io / VPS alternatives
+# in DEPLOY.md.
+
+services:
+  # ── API: Express + Socket.IO + BullMQ (Docker) ──────────────────────────
+  - type: web
+    name: sigma-snap-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: free # change to `starter` (or higher) to stop free-tier sleeping
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000 # Render injects PORT; the app listens on env.PORT
+      # ── Database (Supabase) ──
+      - key: DATABASE_URL
+        sync: false # REQUIRED: Supabase pooled connection string (port 6543, ?pgbouncer=true)
+      - key: DIRECT_URL
+        sync: false # REQUIRED: Supabase direct connection string (port 5432) — used for migrations
+      # ── Cache / queues (Render Redis, provisioned below) ──
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: sigma-snap-redis
+          property: connectionString
+      # ── Auth (auto-generated; rotate any time in the dashboard) ──
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 30d
+      # ── CORS / links — must be the public web-app origin ──
+      - key: WEB_URL
+        sync: false # REQUIRED: e.g. https://sigma-snap.vercel.app (no trailing slash)
+      # ── Object storage (S3-compatible). Supabase Storage exposes an S3 API;
+      #    or use any S3 provider / MinIO. ──
+      - key: S3_ENDPOINT
+        sync: false # e.g. https://<project-ref>.storage.supabase.co/storage/v1/s3
+      - key: S3_REGION
+        value: us-east-1
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false # e.g. sigmasnap
+      - key: S3_PUBLIC_URL
+        sync: false # public base URL for served media
+      - key: S3_FORCE_PATH_STYLE
+        value: "true"
+      # ── Optional providers (safe defaults; override when you wire them up) ──
+      - key: AI_PROVIDER
+        value: local
+      - key: PUSH_PROVIDER
+        value: noop
+      - key: STUN_URLS
+        value: stun:stun.l.google.com:19302
+      - key: MALWARE_SCANNER
+        value: none
+      - key: SEARCH_PROVIDER
+        value: postgres
+      - key: SUBSCRIPTION_PROVIDER
+        value: ""
+
+  # ── Redis: cache + BullMQ (private to the API) ───────────────────────────
+  - type: redis
+    name: sigma-snap-redis
+    plan: free
+    maxmemoryPolicy: noeviction # BullMQ jobs must not be evicted

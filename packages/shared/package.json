@@ -1,0 +1,1 @@
+{"main":"dist/index.js","name":"@sigma-snap/shared","private":true,"scripts":{"build":"tsc -p tsconfig.json","dev":"tsc -p tsconfig.json --watch"},"types":"dist/index.d.ts","version":"0.1.0"}
